@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Shelly Data Fetcher</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22 fill=%22%23f1c40f%22><path d=%22M13 2L3 14h9l-1 8 10-12h-9l1-8z%22/></svg>"
+    />
+    <script src="https://www.gstatic.com/charts/loader.js"></script>
+    <link rel="stylesheet" href="shelly_fetch.css" />
+    <script>
+      // Apply the theme before first paint to avoid a dark→light flash.
+      document.documentElement.setAttribute(
+        "data-theme",
+        localStorage.getItem("shelly_theme") ||
+          (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark")
+      );
+    </script>
+  </head>
+  <body>
+    <main id="monthly-stats-container">
+      <h1>Monthly Consumption</h1>
+
+      <div id="range-selector-container" class="controls">
+        <div class="control">
+          <label for="theme-selector">Theme:</label>
+          <select id="theme-selector">
+            <option value="dark">Dark</option>
+            <option value="light">Light</option>
+          </select>
+        </div>
+        <div class="control">
+          <label for="range-selector">Range:</label>
+          <select id="range-selector">
+            <option value="6" selected>Last 6 Months</option>
+            <option value="12">Last 12 Months</option>
+            <option value="YTD">Year to Date (YTD)</option>
+          </select>
+        </div>
+        <div class="control">
+          <button id="refresh-btn" type="button" title="Clear cached months and refetch">Refresh</button>
+          <button id="rules-btn" type="button" title="Main meter, Unknown row and sub-meter subtractions">Rules</button>
+          <button id="settings-btn" type="button">Settings</button>
+        </div>
+      </div>
+
+      <p id="status-message" class="status" hidden></p>
+
+      <div id="tables-container"></div>
+      <div id="chart-container"></div>
+      <div id="pie-charts-container"></div>
+    </main>
+
+    <div id="chart-modal" class="modal" role="dialog" aria-modal="true" aria-label="Maximized chart">
+      <div class="modal-content">
+        <button class="close-modal" type="button" aria-label="Close">&times;</button>
+        <div id="modal-chart-container"></div>
+      </div>
+    </div>
+
+    <div id="settings-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+      <div class="modal-content modal-content--compact">
+        <button class="close-modal" type="button" aria-label="Close">&times;</button>
+        <h2 id="settings-title">Settings</h2>
+        <div class="form-field">
+          <label for="api-key-input">Shelly Cloud Auth Key:</label>
+          <input type="text" id="api-key-input" placeholder="Enter your Auth Key" autocomplete="off" />
+        </div>
+        <button id="save-settings-btn" type="button">Save</button>
+      </div>
+    </div>
+
+    <div id="rules-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="rules-title">
+      <div class="modal-content modal-content--compact modal-content--wide">
+        <button class="close-modal" type="button" aria-label="Close">&times;</button>
+        <h2 id="rules-title">Consumption Rules</h2>
+
+        <fieldset class="rules-section rules-section--unknown">
+          <legend>Main meter &amp; "Unknown"</legend>
+          <p class="hint">
+            The main meter measures the whole house and is left out of the pie charts. The
+            "Unknown" row is what remains after subtracting other channels from it.
+          </p>
+          <div class="form-field">
+            <label for="rule-main-meter">Main meter:</label>
+            <select id="rule-main-meter"></select>
+          </div>
+          <div class="form-field form-field--inline">
+            <label><input type="checkbox" id="rule-show-unknown" /> Show the "Unknown" row</label>
+          </div>
+
+          <fieldset id="rule-unknown-options" class="rules-subsection">
+            <div class="form-field">
+              <label for="rule-unknown-label">Label for that row:</label>
+              <input type="text" id="rule-unknown-label" />
+            </div>
+            <div class="form-field">
+              <span class="field-title">Calculated as the main meter minus:</span>
+              <div class="radio-group">
+                <label><input type="radio" name="rule-unknown-mode" value="all" /> every other channel (new devices are included automatically)</label>
+                <label><input type="radio" name="rule-unknown-mode" value="selected" /> only these channels:</label>
+              </div>
+              <div id="rule-unknown-subs" class="rule-subs rule-subs--indented" role="group" aria-label="Channels subtracted from the main meter"></div>
+            </div>
+            <div class="form-field form-field--inline">
+              <label><input type="checkbox" id="rule-unknown-clamp" /> Never below zero (clamp negative results to 0)</label>
+            </div>
+            <p id="rule-unknown-formula" class="formula" aria-live="polite"></p>
+          </fieldset>
+        </fieldset>
+
+        <fieldset class="rules-section">
+          <legend>Sub-meters</legend>
+          <p class="hint">
+            When a channel's consumption is already included in another channel, subtract it here
+            (e.g. <em>Rua</em> minus <em>Carro</em>, so the car isn't counted twice).
+          </p>
+          <div id="rule-subtractions"></div>
+          <button id="rule-add-subtraction" type="button" class="secondary">+ Add rule</button>
+        </fieldset>
+
+        <div class="modal-actions">
+          <button id="save-rules-btn" type="button">Save</button>
+          <button id="reset-rules-btn" type="button" class="secondary">Reset to defaults</button>
+        </div>
+      </div>
+    </div>
+
+    <template id="rule-row-template">
+      <div class="rule-row">
+        <div class="rule-row-head">
+          <select class="rule-target" aria-label="Channel to subtract from"></select>
+          <span class="rule-minus">minus</span>
+          <button type="button" class="rule-remove secondary" aria-label="Remove rule">&times;</button>
+        </div>
+        <div class="rule-subs" role="group" aria-label="Channels to subtract"></div>
+      </div>
+    </template>
+
+    <!-- Classic (non-module) script so the page also works when opened via file:// -->
+    <script defer src="shelly_fetch.js"></script>
+  </body>
+</html>
